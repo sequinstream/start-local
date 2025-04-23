@@ -1,15 +1,11 @@
 #!/bin/sh
 # --------------------------------------------------------
-# Run Elasticsearch and Kibana for local testing
+# Run Sequin and supporting services for local testing
 # Note: do not use this script in a production environment
 # --------------------------------------------------------
 #
-# Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-# or more contributor license agreements. See the NOTICE file distributed with
-# this work for additional information regarding copyright
-# ownership. Elasticsearch B.V. licenses this file to you under
-# the Apache License, Version 2.0 (the "License"); you may
-# not use this file except in compliance with the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #	http://www.apache.org/licenses/LICENSE-2.0
@@ -29,15 +25,20 @@ parse_args() {
       -v)
         # Check that there is another argument for the version
         if [ $# -lt 2 ]; then
-          echo "Error: -v requires a version value (eg. -v 8.17.0)"
+          echo "Error: -v requires a version value (eg. -v 1.2.3)"
           exit 1
         fi
-        es_version="$2"
+        sequin_version="$2"
         shift 2
         ;;
 
-      -esonly)
-        esonly=true
+      -minimal)
+        minimal=true
+        shift
+        ;;
+
+      -noplayground)
+        noplayground=true
         shift
         ;;
 
@@ -63,105 +64,41 @@ parse_args() {
 
 startup() {
   echo
-  echo '  ______ _           _   _      '
-  echo ' |  ____| |         | | (_)     '
-  echo ' | |__  | | __ _ ___| |_ _  ___ '
-  echo ' |  __| | |/ _` / __| __| |/ __|'
-  echo ' | |____| | (_| \__ \ |_| | (__ '
-  echo ' |______|_|\__,_|___/\__|_|\___|'
+  echo '   _____                  _       '
+  echo '  / ____|                (_)      '
+  echo ' | (___   ___  __ _ _   _ _ _ __  '
+  echo '  \___ \ / _ \/ _` | | | | | '_ \ '
+  echo '  ____) |  __/ (_| | |_| | | | | |'
+  echo ' |_____/ \___|\__, |\__,_|_|_| |_|'
+  echo '                 | |              '
+  echo '                 |_|              '
   echo '-------------------------------------------------'
-  echo '🚀 Run Elasticsearch and Kibana for local testing'
+  echo '🚀 Run Sequin for local testing'
   echo '-------------------------------------------------'
   echo 
   echo 'ℹ️  Do not use this script in a production environment'
   echo
 
   # Version
-  version="0.8.1"
+  version="0.1.0"
 
   # Folder name for the installation
-  installation_folder="elastic-start-local"
-  # API key name for Elasticsearch
-  api_key_name="elastic-start-local"
+  installation_folder="sequin-start-local"
   # Name of the error log
   error_log="error-start-local.log"
   # Minimum version for docker-compose
   min_docker_compose="1.29.0"
-  # Elasticsearch container name
-  elasticsearch_container_name="es-local-dev"
-  # Kibana container name
-  kibana_container_name="kibana-local-dev"
-  # Minimum disk space required for docker images + services (in GB)
-  min_disk_space_required=5
-}
-
-# Check for ARM64 architecture
-is_arm64() {
-  arch="$(uname -m)"
-  if [ "$arch" = "arm64" ] || [ "$arch" = "aarch64" ]; then
-    return 0 # Return 0 (true)
-  else
-    return 1 # Return 1 (false)
-  fi
-}
-
-# Alternative to sort -V, which is not available in BSD-based systems (e.g., macOS)
-version_sort() {
-  awk -F'.' '
-  {
-      printf("%d %d %d %s\n", $1, $2, $3, $0)
-  }' | sort -n -k1,1 -k2,2 -k3,3 | awk '{print $4}'
+  # Container names
+  sequin_container_name="sequin-local-dev"
+  postgres_container_name="postgres-local-dev"
+  redis_container_name="redis-local-dev"
+  prometheus_container_name="prometheus-local-dev"
+  grafana_container_name="grafana-local-dev"
 }
 
 # Function to check if the format is a valid semantic version (major.minor.patch)
 is_valid_version() {
   echo "$1" | grep -E -q '^[0-9]+\.[0-9]+\.[0-9]+$'
-}
-
-# Get the latest stable version of Elasticsearch
-# Note: It removes all the beta or candidate releases from the list
-# but includes the GA releases (e.g. new major)
-get_latest_version() {
-  versions="$(curl -s "https://artifacts.elastic.co/releases/stack.json")"
-  latest_version=$(echo "$versions" | awk -F'"' '/"version": *"/ {print $4}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+( GA)?$' | version_sort | tail -n 1)
-  # Remove the GA prefix from the version, if present
-  latest_version=$(echo "$latest_version" | awk '{ gsub(/ GA$/, "", $0); print }')
-
-  # Check if the latest version is empty
-  if [ -z "$latest_version" ]; then
-    echo "Error: the latest Elasticsearch version is empty"
-    exit 1
-  fi
-  # Check if the latest version is valid
-  if ! is_valid_version "$latest_version"; then
-    echo "Error: {$latest_version} is not a valid Elasticsearch stable version"
-    exit 1
-  fi
-
-  echo "$latest_version"
-}
-
-# Detect if running on LXC container
-detect_lxc() {
-    # Check /proc/1/environ for LXC container identifier
-    if grep -qa "container=lxc" /proc/1/environ 2>/dev/null; then
-      return 0
-    fi
-    # Check /proc/self/cgroup for LXC references
-    if grep -q "lxc" /proc/self/cgroup 2>/dev/null; then
-      return 0
-    fi
-    # Check for LXC in /sys/fs/cgroup
-    if grep -q "lxc" /sys/fs/cgroup/* 2>/dev/null; then  
-      return 0
-    fi
-    # Use systemd-detect-virt if available
-    if command -v systemd-detect-virt >/dev/null 2>&1; then
-      if [ "$(systemd-detect-virt)" = "lxc" ]; then
-        return 0
-      fi
-    fi
-    return 1
 }
 
 # Get linux distribution
@@ -249,7 +186,7 @@ generate_error_log() {
     docker logs "${service}" >> "$error_file" 2> /dev/null
   done
   echo "An error log has been generated in ${error_log} file."
-  echo "If you need assistance, open an issue at https://github.com/elastic/start-local/issues"
+  echo "If you need assistance, open an issue at https://github.com/sequinstream/sequin/issues"
 }
 
 # Compare versions
@@ -280,46 +217,24 @@ compare_versions() {
   echo "eq"
 }
 
-# Wait for availability of Kibana
+# Wait for availability of Sequin health endpoint
 # parameter: timeout in seconds
-wait_for_kibana() {
+wait_for_sequin() {
   timeout="${1:-60}"
-  echo "- Waiting for Kibana to be ready"
+  echo "- Waiting for Sequin to be ready"
   echo
   start_time="$(date +%s)"
-  until curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'; do
+  until curl -s http://localhost:7376/health | grep -q '"ok":true'; do
     elapsed_time="$(($(date +%s) - start_time))"
     if [ "$elapsed_time" -ge "$timeout" ]; then
-      error_msg="Error: Kibana timeout of ${timeout} sec"
+      error_msg="Error: Sequin timeout of ${timeout} sec"
       echo "$error_msg"
-      generate_error_log "${error_msg}" "${elasticsearch_container_name} ${kibana_container_name} kibana_settings"
+      generate_error_log "${error_msg}" "${sequin_container_name} ${postgres_container_name} ${redis_container_name}"
       cleanup
       exit 1
     fi
     sleep 2
   done
-}
-
-# Generates a random password with letters and numbers
-# parameter: size of the password (default is 8 characters)
-random_password() {
-  LENGTH="${1:-8}"
-  LC_ALL=C tr -dc 'A-Za-z0-9' < /dev/urandom | head -c "${LENGTH}"
-}
-
-# Create an API key for Elasticsearch
-# parameter 1: the Elasticsearch password
-# parameter 2: name of the API key to generate
-create_api_key() {
-  es_password=$1
-  name=$2
-  response="$(curl -s -u "elastic:${es_password}" -X POST http://localhost:9200/_security/api_key -d "{\"name\": \"${name}\"}" -H "Content-Type: application/json")"
-  if [ -z "$response" ]; then
-    echo ""
-  else
-    api_key="$(echo "$response" | grep -Eo '"encoded":"[A-Za-z0-9+/=]+' | grep -Eo '[A-Za-z0-9+/=]+' | tail -n 1)"
-    echo "$api_key"
-  fi
 }
 
 # Check if a container is runnning
@@ -337,20 +252,8 @@ check_container_running() {
   fi
 }
 
-# Check the available disk space in GB
-# parameter: required size in GB
-check_disk_space_gb() {
-  required=$1
-  available_gb=$(($(df -k / | awk 'NR==2 {print $4}') / 1024 / 1024))
-  if [ "$available_gb" -lt "$required" ]; then
-    echo "Error: only ${available_gb} GB of disk space available; ${required} GB required for the installation"
-    exit 1
-  fi
-}
-
 check_requirements() {
   # Check the requirements
-  check_disk_space_gb ${min_disk_space_required}
   if ! available "curl"; then
     echo "Error: curl command is required"
     echo "You can install it from https://curl.se/download.html."
@@ -361,7 +264,7 @@ check_requirements() {
     echo "You can install it from https://www.gnu.org/software/grep/."
     exit 1
   fi
-  need_wait_for_kibana=true
+  need_wait_for_sequin=true
   # Check for "docker compose" or "docker-compose"
   set +e
   if ! docker compose >/dev/null 2>&1; then
@@ -394,12 +297,590 @@ check_requirements() {
     # --wait option has been introduced in 2.1.1+
     if [ "$(compare_versions "$docker_version" "2.1.0")" = "gt" ]; then
       docker="docker compose up --wait"
-      need_wait_for_kibana=false
+      need_wait_for_sequin=false
     else
       docker="docker compose up -d"
     fi
   fi
   set -e
+}
+
+choose_sequin_version() {
+  if [ -z "${sequin_version:-}" ]; then
+    # Default to latest
+    sequin_version="latest"
+  fi
+}
+
+# Create the start script (start.sh)
+create_start_file() {
+  cat > start.sh <<-'EOM'
+#!/bin/sh
+# Start script for Sequin start-local
+# More information: https://github.com/sequinstream/sequin
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}"
+. ./.env
+
+EOM
+
+  if [ "$need_wait_for_sequin" = true ]; then
+    cat >> start.sh <<-'EOM'
+wait_for_sequin() {
+  local timeout="${1:-60}"
+  echo "- Waiting for Sequin to be ready"
+  echo
+  local start_time="$(date +%s)"
+  until curl -s http://localhost:7376/health | grep -q '"ok":true'; do
+    elapsed_time="$(($(date +%s) - start_time))"
+    if [ "$elapsed_time" -ge "$timeout" ]; then
+      echo "Error: Sequin timeout of ${timeout} sec"
+      exit 1
+    fi
+    sleep 2
+  done
+}
+
+EOM
+  fi
+
+  cat >> start.sh <<- EOM
+$docker
+EOM
+
+  if [ "$need_wait_for_sequin" = true ]; then
+    cat >> start.sh <<-'EOM'
+wait_for_sequin 120
+EOM
+  fi
+  chmod +x start.sh
+}
+
+# Create the stop script (stop.sh)
+create_stop_file() {
+  cat > stop.sh <<-'EOM'
+#!/bin/sh
+# Stop script for Sequin start-local
+# More information: https://github.com/sequinstream/sequin
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "${SCRIPT_DIR}"
+EOM
+
+  cat >> stop.sh <<- EOM
+$docker_stop
+EOM
+  chmod +x stop.sh
+}
+
+# Create the uninstall script (uninstall.sh)
+create_uninstall_file() {
+  cat > uninstall.sh <<-'EOM'
+#!/bin/sh
+# Uninstall script for Sequin start-local
+# More information: https://github.com/sequinstream/sequin
+set -eu
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+ask_confirmation() {
+    echo "Do you want to continue? (yes/no)"
+    read -r answer
+    case "$answer" in
+        yes|y|Y|Yes|YES)
+            return 0  # true
+            ;;
+        no|n|N|No|NO)
+            return 1  # false
+            ;;
+        *)
+            echo "Please answer yes or no."
+            ask_confirmation  # Ask again if the input is invalid
+            ;;
+    esac
+}
+
+cd "${SCRIPT_DIR}"
+if [ ! -e "docker-compose.yml" ]; then
+  echo "Error: I cannot find the docker-compose.yml file"
+  echo "I cannot uninstall Sequin start-local."
+fi
+if [ ! -e ".env" ]; then
+  echo "Error: I cannot find the .env file"
+  echo "I cannot uninstall Sequin start-local."
+fi
+echo "This script will uninstall Sequin start-local."
+echo "All data will be deleted and cannot be recovered."
+if ask_confirmation; then
+EOM
+
+  cat >> uninstall.sh <<- EOM
+  $docker_clean
+  $docker_remove_volumes
+  rm docker-compose.yml .env uninstall.sh start.sh stop.sh
+  echo "Sequin start-local successfully removed"
+fi
+EOM
+  chmod +x uninstall.sh
+}
+
+create_env_file() {
+  # Create the .env file
+  cat > .env <<- EOM
+SEQUIN_VERSION=$sequin_version
+SEQUIN_CONTAINER_NAME=$sequin_container_name
+PG_CONTAINER_NAME=$postgres_container_name
+PG_DATABASE=sequin
+PG_PLAYGROUND_DATABASE=sequin_playground
+PG_USERNAME=postgres
+PG_PASSWORD=postgres
+PG_PORT=5432
+REDIS_CONTAINER_NAME=$redis_container_name
+REDIS_PORT=6379
+EOM
+
+  if [ -z "${minimal:-}" ]; then
+    cat >> .env <<- EOM
+PROMETHEUS_CONTAINER_NAME=$prometheus_container_name
+GRAFANA_CONTAINER_NAME=$grafana_container_name
+EOM
+  fi
+}
+
+# Create the docker-compose-yml file
+create_docker_compose_file() {
+  cat > docker-compose.yml <<-'EOM'
+name: sequin-local
+
+services:
+  sequin:
+    image: sequin/sequin:${SEQUIN_VERSION}
+    container_name: ${SEQUIN_CONTAINER_NAME}
+    pull_policy: always
+    ports:
+      - "127.0.0.1:7376:7376"
+    environment:
+      - PG_HOSTNAME=${PG_CONTAINER_NAME}
+      - PG_DATABASE=${PG_DATABASE}
+      - PG_PORT=${PG_PORT}
+      - PG_USERNAME=${PG_USERNAME}
+      - PG_PASSWORD=${PG_PASSWORD}
+      - PG_POOL_SIZE=20
+      - SECRET_KEY_BASE=wDPLYus0pvD6qJhKJICO4dauYPXfO/Yl782Zjtpew5qRBDp7CZvbWtQmY0eB13If
+      - VAULT_KEY=2Sig69bIpuSm2kv0VQfDekET2qy8qUZGI8v3/h3ASiY=
+      - REDIS_URL=redis://${REDIS_CONTAINER_NAME}:${REDIS_PORT}
+      - CONFIG_FILE_PATH=/config/playground.yml
+    volumes:
+      - ./playground.yml:/config/playground.yml
+    depends_on:
+      ${REDIS_CONTAINER_NAME}:
+        condition: service_started
+      ${PG_CONTAINER_NAME}:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:7376/health | grep -q '\"ok\":true'"]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+      start_interval: 1s
+
+  postgres:
+    image: postgres:16
+    container_name: ${PG_CONTAINER_NAME}
+    ports:
+      - "127.0.0.1:7377:5432"
+    environment:
+      - POSTGRES_DB=${PG_DATABASE}
+      - POSTGRES_USER=${PG_USERNAME}
+      - POSTGRES_PASSWORD=${PG_PASSWORD}
+    command: ["postgres", "-c", "wal_level=logical"]
+    volumes:
+      - sequin_postgres_data:/var/lib/postgresql/data
+EOM
+
+  if [ -z "${noplayground:-}" ]; then
+    cat >> docker-compose.yml <<-'EOM'
+      # Creates a sample database for the playground
+      - ./postgres-init:/docker-entrypoint-initdb.d
+EOM
+  fi
+
+  cat >> docker-compose.yml <<-'EOM'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USERNAME} -d ${PG_DATABASE}"]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      start_period: 5s
+      start_interval: 1s
+
+  redis:
+    image: redis:7
+    container_name: ${REDIS_CONTAINER_NAME}
+    ports:
+      - "127.0.0.1:7378:6379"
+    command: ["redis-server", "--port", "6379"]
+    volumes:
+      - sequin_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      start_period: 2s
+      start_interval: 1s
+EOM
+
+  if [ -z "${minimal:-}" ]; then
+    cat >> docker-compose.yml <<-'EOM'
+
+  prometheus:
+    image: prom/prometheus
+    container_name: ${PROMETHEUS_CONTAINER_NAME}
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana
+    container_name: ${GRAFANA_CONTAINER_NAME}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    volumes:
+      - sequin_grafana_data:/var/lib/grafana
+      - ./grafana_datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml
+      - ./grafana_dashboard.yml:/etc/grafana/provisioning/dashboards/dashboard.yml
+      - ./dashboard.json:/etc/grafana/dashboards/dashboards/sequin.json
+EOM
+  fi
+
+  cat >> docker-compose.yml <<-'EOM'
+
+volumes:
+  sequin_postgres_data:
+  sequin_redis_data:
+EOM
+
+  if [ -z "${minimal:-}" ]; then
+    cat >> docker-compose.yml <<-'EOM'
+  sequin_grafana_data:
+EOM
+  fi
+}
+
+create_postgres_init() {
+  if [ -z "${noplayground:-}" ]; then
+    mkdir -p postgres-init
+    cat > postgres-init/01-init-playground.sql <<-'EOM'
+-- Create the Sequin playground database
+CREATE DATABASE sequin_playground;
+
+-- Connect to the playground database
+\c sequin_playground;
+
+-- Create products table
+CREATE TABLE public.products (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    price DECIMAL(10, 2) NOT NULL,
+    stock INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT NOW()
+);
+
+-- Insert sample data
+INSERT INTO public.products (name, description, price, stock) VALUES
+('Avocados (3 pack)', 'Fresh organic avocados', 5.99, 48),
+('Flank Steak (1 lb)', 'Grass-fed beef', 8.99, 24),
+('Salmon Fillet (12 oz)', 'Wild-caught Alaskan salmon', 14.99, 12),
+('Baby Spinach (16 oz)', 'Organic pre-washed spinach', 4.99, 30),
+('Sourdough Bread', 'Freshly baked artisanal bread', 6.99, 15),
+('Blueberries (6 oz)', 'Organic fresh blueberries', 3.99, 40);
+EOM
+  fi
+}
+
+create_prometheus_config() {
+  if [ -z "${minimal:-}" ]; then
+    cat > prometheus.yml <<-'EOM'
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: 'sequin'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['sequin:7376']
+EOM
+  fi
+}
+
+create_grafana_configs() {
+  if [ -z "${minimal:-}" ]; then
+    # Create Grafana datasource config
+    cat > grafana_datasource.yml <<-'EOM'
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+EOM
+
+    # Create Grafana dashboard provisioning config
+    cat > grafana_dashboard.yml <<-'EOM'
+apiVersion: 1
+
+providers:
+  - name: 'Sequin'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards/dashboards
+EOM
+
+    # Create a simple dashboard for Sequin
+    cat > dashboard.json <<-'EOM'
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0.5,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "title": "Sequin Metrics",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": [],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Sequin Dashboard",
+  "uid": "sequin",
+  "version": 1,
+  "weekStart": ""
+}
+EOM
+  fi
+}
+
+create_playground_config() {
+  # Create a sample playground configuration file
+  cat > playground.yml <<-'EOM'
+default_database_id: sequin_playground
+databases:
+  - id: sequin_playground
+    name: Sequin Playground
+    connection_details:
+      hostname: postgres
+      port: 5432
+      database: sequin_playground
+      username: postgres
+      password: postgres
+EOM
+}
+
+print_steps() {
+  if [ -z "${minimal:-}" ]; then
+    echo "⌛️ Setting up Sequin and all supporting services v${sequin_version}..."
+  else
+    echo "⌛️ Setting up Sequin core services v${sequin_version}..."
+  fi
+  echo
+  echo "- Created the ${folder} folder containing the files:"
+  echo "  - .env, with settings"
+  echo "  - docker-compose.yml, for Docker services"
+  echo "  - start/stop/uninstall commands"
+  
+  if [ -z "${noplayground:-}" ]; then
+    echo "  - playground database setup"
+  fi
+  
+  if [ -z "${minimal:-}" ]; then
+    echo "  - prometheus and grafana configurations"
+  fi
+}
+
+running_docker_compose() {
+  # Execute docker compose
+  echo "- Running ${docker}"
+  echo
+  set +e
+  if ! $docker; then
+    error_msg="Error: ${docker} command failed!"
+    echo "$error_msg"
+    if [ -z "${minimal:-}" ]; then
+      generate_error_log "${error_msg}" "${sequin_container_name} ${postgres_container_name} ${redis_container_name} ${prometheus_container_name} ${grafana_container_name}"
+    else
+      generate_error_log "${error_msg}" "${sequin_container_name} ${postgres_container_name} ${redis_container_name}"
+    fi
+    cleanup
+    exit 1
+  fi
+  set -e
+}
+
+sequin_health_check() {
+  if [ "$need_wait_for_sequin" = true ]; then
+    wait_for_sequin 120
+  fi
+}
+
+success() {
+  echo
+  if [ -z "${minimal:-}" ]; then
+    echo "🎉 Congrats, Sequin and all supporting services are installed and running in Docker!"
+  else
+    echo "🎉 Congrats, Sequin is installed and running in Docker!"
+  fi
+  echo
+  echo "🌐 Open your browser at http://localhost:7376"
+  echo
+  echo "   Default login credentials:"
+  echo "   Email: admin@sequinstream.com"
+  echo "   Password: sequinpassword!"
+  echo
+  echo "📊 Postgres database is available at localhost:7377"
+  echo "   Username: postgres"
+  echo "   Password: postgres"
+
+  if [ -z "${noplayground:-}" ]; then
+    echo
+    echo "🏝️  A playground database has been created with sample data"
+  fi
+  
+  if [ -z "${minimal:-}" ]; then
+    echo
+    echo "📈 Monitoring:"
+    echo "   - Prometheus: http://localhost:9090"
+    echo "   - Grafana: http://localhost:3000 (admin/admin)"
+  fi
+  
+  echo
+  echo "Learn more at https://sequinstream.com/docs"
+  echo
 }
 
 check_installation_folder() {
@@ -429,9 +910,13 @@ check_installation_folder() {
 
 check_docker_services() {
   # Check for docker containers running
-  check_container_running "$elasticsearch_container_name"
-  check_container_running "$kibana_container_name"
-  check_container_running "kibana_settings"
+  check_container_running "$sequin_container_name"
+  check_container_running "$postgres_container_name"
+  check_container_running "$redis_container_name"
+  if [ -z "${minimal:-}" ]; then
+    check_container_running "$prometheus_container_name"
+    check_container_running "$grafana_container_name"
+  fi
 }
 
 create_installation_folder() {
@@ -443,395 +928,6 @@ create_installation_folder() {
   folder_to_clean=$folder
 }
 
-generate_passwords() {
-  # Generate random passwords
-  es_password="$(random_password)"
-  if  [ -z "${esonly:-}" ]; then
-    kibana_password="$(random_password)"
-    kibana_encryption_key="$(random_password 32)"
-  fi
-}
-
-choose_es_version() {
-  if [ -z "${es_version:-}" ]; then
-    # Get the latest Elasticsearch version
-    es_version="$(get_latest_version)"
-  fi
-}
-
-create_env_file() {
-  # Create the .env file
-  cat > .env <<- EOM
-ES_LOCAL_VERSION=$es_version
-ES_LOCAL_CONTAINER_NAME=$elasticsearch_container_name
-ES_LOCAL_PASSWORD=$es_password
-ES_LOCAL_PORT=9200
-ES_LOCAL_URL=http://localhost:\${ES_LOCAL_PORT}
-ES_LOCAL_HEAP_INIT=128m
-ES_LOCAL_HEAP_MAX=2g
-ES_LOCAL_DISK_SPACE_REQUIRED=1gb
-EOM
-
-  if  [ -z "${esonly:-}" ]; then
-    cat >> .env <<- EOM
-KIBANA_LOCAL_CONTAINER_NAME=$kibana_container_name
-KIBANA_LOCAL_PORT=5601
-KIBANA_LOCAL_PASSWORD=$kibana_password
-KIBANA_ENCRYPTION_KEY=$kibana_encryption_key
-EOM
-  fi
-}
-
-# Create the start script (start.sh)
-# including the license update if trial expired
-create_start_file() {
-  today=$(date +%s)
-  expire=$((today + 3600*24*30))
-
-  cat > start.sh <<-'EOM'
-#!/bin/sh
-# Start script for start-local
-# More information: https://github.com/elastic/start-local
-set -eu
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "${SCRIPT_DIR}"
-today=$(date +%s)
-. ./.env
-# Check disk space
-available_gb=$(($(df -k / | awk 'NR==2 {print $4}') / 1024 / 1024))
-required=$(echo "${ES_LOCAL_DISK_SPACE_REQUIRED}" | grep -Eo '[0-9]+')
-if [ "$available_gb" -lt "$required" ]; then
-  echo "----------------------------------------------------------------------------"
-  echo "WARNING: Disk space is below the ${required} GB limit. Elasticsearch will be"
-  echo "executed in read-only mode. Please free up disk space to resolve this issue."
-  echo "----------------------------------------------------------------------------"
-  echo "Press ENTER to confirm."
-  read -r
-fi
-EOM
-  if [ "$need_wait_for_kibana" = true ]; then
-    cat >> start.sh <<-'EOM'
-wait_for_kibana() {
-  local timeout="${1:-60}"
-  echo "- Waiting for Kibana to be ready"
-  echo
-  local start_time="$(date +%s)"
-  until curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'; do
-    elapsed_time="$(($(date +%s) - start_time))"
-    if [ "$elapsed_time" -ge "$timeout" ]; then
-      echo "Error: Kibana timeout of ${timeout} sec"
-      exit 1
-    fi
-    sleep 2
-  done
-}
-
-EOM
-  fi
-
-  cat >> start.sh <<- EOM
-if [ -z "\${ES_LOCAL_LICENSE:-}" ] && [ "\$today" -gt $expire ]; then
-  echo "---------------------------------------------------------------------"
-  echo "The one-month trial period has expired. You can continue using the"
-  echo "Free and open Basic license or request to extend the trial for"
-  echo "another 30 days using this form:"
-  echo "https://www.elastic.co/trialextension"
-  echo "---------------------------------------------------------------------"
-  echo "For more info about the license: https://www.elastic.co/subscriptions"
-  echo
-  echo "Updating the license..."
-  $docker elasticsearch >/dev/null 2>&1
-  result=\$(curl -s -X POST "\${ES_LOCAL_URL}/_license/start_basic?acknowledge=true" -H "Authorization: ApiKey \${ES_LOCAL_API_KEY}" -o /dev/null -w '%{http_code}\n')
-  if [ "\$result" = "200" ]; then
-    echo "✅ Basic license successfully installed"
-    echo "ES_LOCAL_LICENSE=basic" >> .env
-  else 
-    echo "Error: I cannot update the license"
-    result=\$(curl -s -X GET "\${ES_LOCAL_URL}" -H "Authorization: ApiKey \${ES_LOCAL_API_KEY}" -o /dev/null -w '%{http_code}\n')
-    if [ "\$result" != "200" ]; then
-      echo "Elasticsearch is not running."
-    fi
-    exit 1
-  fi
-  echo
-fi
-$docker
-EOM
-
-  if [ "$need_wait_for_kibana" = true ]; then
-    cat >> start.sh <<-'EOM'
-wait_for_kibana 120
-EOM
-  fi
-  chmod +x start.sh
-}
-
-# Create the stop script (stop.sh)
-create_stop_file() {
-  cat > stop.sh <<-'EOM'
-#!/bin/sh
-# Stop script for start-local
-# More information: https://github.com/elastic/start-local
-set -eu
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "${SCRIPT_DIR}"
-EOM
-
-  cat >> stop.sh <<- EOM
-$docker_stop
-EOM
-  chmod +x stop.sh
-}
-
-# Create the uninstall script (uninstall.sh)
-create_uninstall_file() {
-
-  cat > uninstall.sh <<-'EOM'
-#!/bin/sh
-# Uninstall script for start-local
-# More information: https://github.com/elastic/start-local
-set -eu
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-
-ask_confirmation() {
-    echo "Do you want to continue? (yes/no)"
-    read -r answer
-    case "$answer" in
-        yes|y|Y|Yes|YES)
-            return 0  # true
-            ;;
-        no|n|N|No|NO)
-            return 1  # false
-            ;;
-        *)
-            echo "Please answer yes or no."
-            ask_confirmation  # Ask again if the input is invalid
-            ;;
-    esac
-}
-
-cd "${SCRIPT_DIR}"
-if [ ! -e "docker-compose.yml" ]; then
-  echo "Error: I cannot find the docker-compose.yml file"
-  echo "I cannot uninstall start-local."
-fi
-if [ ! -e ".env" ]; then
-  echo "Error: I cannot find the .env file"
-  echo "I cannot uninstall start-local."
-fi
-echo "This script will uninstall start-local."
-echo "All data will be deleted and cannot be recovered."
-if ask_confirmation; then
-EOM
-
-  cat >> uninstall.sh <<- EOM
-  $docker_clean
-  $docker_remove_volumes
-  rm docker-compose.yml .env uninstall.sh start.sh stop.sh
-  echo "Start-local successfully removed"
-fi
-EOM
-  chmod +x uninstall.sh
-}
-
-create_docker_compose_file() {
-  # Create the docker-compose-yml file
-  cat > docker-compose.yml <<-'EOM'
-services:
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_LOCAL_VERSION}
-    container_name: ${ES_LOCAL_CONTAINER_NAME}
-    volumes:
-      - dev-elasticsearch:/usr/share/elasticsearch/data
-    ports:
-      - 127.0.0.1:${ES_LOCAL_PORT}:9200
-    environment:
-      - discovery.type=single-node
-      - ELASTIC_PASSWORD=${ES_LOCAL_PASSWORD}
-      - xpack.security.enabled=true
-      - xpack.security.http.ssl.enabled=false
-      - xpack.license.self_generated.type=trial
-      - xpack.ml.use_auto_machine_memory_percent=true
-      - ES_JAVA_OPTS=-Xms${ES_LOCAL_HEAP_INIT} -Xmx${ES_LOCAL_HEAP_MAX}
-      - cluster.routing.allocation.disk.watermark.low=${ES_LOCAL_DISK_SPACE_REQUIRED}
-      - cluster.routing.allocation.disk.watermark.high=${ES_LOCAL_DISK_SPACE_REQUIRED}
-      - cluster.routing.allocation.disk.watermark.flood_stage=${ES_LOCAL_DISK_SPACE_REQUIRED}
-EOM
-  
-  # Fix for JDK AArch64 issue, see https://bugs.openjdk.org/browse/JDK-8345296
-  if is_arm64; then
-  cat >> docker-compose.yml <<-'EOM'
-      - "_JAVA_OPTIONS=-XX:UseSVE=0"
-EOM
-  fi
-
-  # Fix for OCI issue on LXC, see https://github.com/elastic/start-local/issues/27
-  if ! detect_lxc; then
-  cat >> docker-compose.yml <<-'EOM'
-    ulimits:
-      memlock:
-        soft: -1
-        hard: -1
-EOM
-  fi
-
-  cat >> docker-compose.yml <<-'EOM'
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl --output /dev/null --silent --head --fail -u elastic:${ES_LOCAL_PASSWORD} http://elasticsearch:9200",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-
-EOM
-
-if  [ -z "${esonly:-}" ]; then
-  cat >> docker-compose.yml <<-'EOM'
-  kibana_settings:
-    depends_on:
-      elasticsearch:
-        condition: service_healthy
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ES_LOCAL_VERSION}
-    container_name: kibana_settings
-    restart: 'no'
-    command: >
-      bash -c '
-        echo "Setup the kibana_system password";
-        start_time=$$(date +%s);
-        timeout=60;
-        until curl -s -u "elastic:${ES_LOCAL_PASSWORD}" -X POST http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\":\"${KIBANA_LOCAL_PASSWORD}\"}" -H "Content-Type: application/json" | grep -q "^{}"; do
-          if [ $$(($$(date +%s) - $$start_time)) -ge $$timeout ]; then
-            echo "Error: Elasticsearch timeout";
-            exit 1;
-          fi;
-          sleep 2;
-        done;
-      '
-
-  kibana:
-    depends_on:
-      kibana_settings:
-        condition: service_completed_successfully
-    image: docker.elastic.co/kibana/kibana:${ES_LOCAL_VERSION}
-    container_name: ${KIBANA_LOCAL_CONTAINER_NAME}
-    volumes:
-      - dev-kibana:/usr/share/kibana/data
-    ports:
-      - 127.0.0.1:${KIBANA_LOCAL_PORT}:5601
-    environment:
-      - SERVER_NAME=kibana
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
-      - ELASTICSEARCH_USERNAME=kibana_system
-      - ELASTICSEARCH_PASSWORD=${KIBANA_LOCAL_PASSWORD}
-      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${KIBANA_ENCRYPTION_KEY}
-      - ELASTICSEARCH_PUBLICBASEURL=http://localhost:${ES_LOCAL_PORT}
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "curl -s -I http://kibana:5601 | grep -q 'HTTP/1.1 302 Found'",
-        ]
-      interval: 10s
-      timeout: 10s
-      retries: 30
-
-EOM
-fi
-
-  cat >> docker-compose.yml <<-'EOM'
-volumes:
-  dev-elasticsearch:
-EOM
-
-if  [ -z "${esonly:-}" ]; then
-  cat >> docker-compose.yml <<-'EOM'
-  dev-kibana:
-EOM
-fi
-}
-
-print_steps() {
-  if  [ -z "${esonly:-}" ]; then
-    echo "⌛️ Setting up Elasticsearch and Kibana v${es_version}..."
-  else
-    echo "⌛️ Setting up Elasticsearch v${es_version}..."
-  fi
-  echo
-  echo "- Generated random passwords"
-  echo "- Created the ${folder} folder containing the files:"
-  echo "  - .env, with settings"
-  echo "  - docker-compose.yml, for Docker services"
-  echo "  - start/stop/uninstall commands"
-}
-
-running_docker_compose() {
-  # Execute docker compose
-  echo "- Running ${docker}"
-  echo
-  set +e
-  if ! $docker; then
-    error_msg="Error: ${docker} command failed!"
-    echo "$error_msg"
-    if  [ -z "${esonly:-}" ]; then
-      generate_error_log "${error_msg}" "${elasticsearch_container_name} ${kibana_container_name} kibana_settings"
-    else
-      generate_error_log "${error_msg}" "${elasticsearch_container_name}"
-    fi
-    cleanup
-    exit 1
-  fi
-  set -e
-}
-
-api_key() {
-  # Create an API key for Elasticsearch
-  api_key=$(create_api_key "$es_password" "$api_key_name")
-  if [ -n "$api_key" ]; then
-    echo "ES_LOCAL_API_KEY=${api_key}" >> .env
-  fi
-}
-
-kibana_wait() {
-  if [ "$need_wait_for_kibana" = true ]; then
-    wait_for_kibana 120
-  fi
-}
-
-success() {
-  echo
-  if  [ -z "${esonly:-}" ]; then
-    echo "🎉 Congrats, Elasticsearch and Kibana are installed and running in Docker!"
-    echo
-    echo "🌐 Open your browser at http://localhost:5601"
-    echo
-    echo "   Username: elastic"
-    echo "   Password: ${es_password}"
-    echo
-  else
-    echo "🎉 Congrats, Elasticsearch is installed and running in Docker!"
-  fi
-  
-  echo "🔌 Elasticsearch API endpoint: http://localhost:9200"
-  if [ -n "$api_key" ]; then
-    echo "🔑 API key: $api_key"
-    echo
-  else
-    echo "🔑 Use basic auth or create an API key"
-    echo "https://www.elastic.co/guide/en/kibana/current/api-keys.html"
-    echo
-  fi
-  echo
-  echo "Learn more at https://github.com/elastic/start-local"
-
-  echo
-}
-
 main() {
   parse_args "$@"
   startup
@@ -839,17 +935,19 @@ main() {
   check_installation_folder
   check_docker_services
   create_installation_folder
-  generate_passwords
-  choose_es_version
+  choose_sequin_version
   create_start_file
   create_stop_file
   create_uninstall_file
   create_env_file
   create_docker_compose_file
+  create_postgres_init
+  create_prometheus_config
+  create_grafana_configs
+  create_playground_config
   print_steps
   running_docker_compose
-  api_key
-  kibana_wait
+  sequin_health_check
   success
 }
 

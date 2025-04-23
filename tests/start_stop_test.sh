@@ -1,10 +1,6 @@
 #!/bin/bash
-# Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-# or more contributor license agreements. See the NOTICE file distributed with
-# this work for additional information regarding copyright
-# ownership. Elasticsearch B.V. licenses this file to you under
-# the Apache License, Version 2.0 (the "License"); you may
-# not use this file except in compliance with the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #	http://www.apache.org/licenses/LICENSE-2.0
@@ -17,8 +13,10 @@
 # under the License.
 
 CURRENT_DIR=$(pwd)
-DEFAULT_DIR="${CURRENT_DIR}/elastic-start-local"
+DEFAULT_DIR="${CURRENT_DIR}/sequin-start-local"
 ENV_PATH="${DEFAULT_DIR}/.env"
+START_FILE="${DEFAULT_DIR}/start.sh"
+STOP_FILE="${DEFAULT_DIR}/stop.sh"
 UNINSTALL_FILE="${DEFAULT_DIR}/uninstall.sh"
 
 # include external scripts
@@ -31,21 +29,28 @@ function set_up_before_script() {
 }
 
 function tear_down_after_script() {
-    yes | "${UNINSTALL_FILE}"
+    yes | "${DEFAULT_DIR}/uninstall.sh"
     rm -rf "${DEFAULT_DIR}"
 }
 
-function test_stop() {
-    "${TEST_DIR}/${DEFAULT_DIR}/stop.sh"
-
-    assert_exit_code "1" "$(check_docker_service_running es-local-dev)"
-    assert_exit_code "1" "$(check_docker_service_running kibana-local-dev)"
-    assert_exit_code "1" "$(check_docker_service_running kibana_settings)"
-}
-
-function test_start() {
-    "${TEST_DIR}/${DEFAULT_DIR}/start.sh"
-
-    assert_exit_code "0" "$(check_docker_service_running es-local-dev)"
-    assert_exit_code "0" "$(check_docker_service_running kibana-local-dev)"
+function test_stop_and_start() {
+    # Stop the services
+    "${STOP_FILE}"
+    sleep 5
+    
+    # Check that Sequin is not running
+    result=$(check_docker_service_running "${SEQUIN_CONTAINER_NAME}")
+    assert_equals 1 $?
+    
+    # Start the services again
+    "${START_FILE}"
+    sleep 15
+    
+    # Check that Sequin is running
+    result=$(check_docker_service_running "${SEQUIN_CONTAINER_NAME}")
+    assert_equals 0 $?
+    
+    # Check Sequin health endpoint
+    result=$(check_sequin_health "http://localhost:7376/health")
+    assert_equals "ok" "$result"
 }

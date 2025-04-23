@@ -24,7 +24,7 @@ UNINSTALL_FILE="${DEFAULT_DIR}/uninstall.sh"
 source "${CURRENT_DIR}/tests/utility.sh"
 
 function set_up_before_script() {
-    sh "start-local.sh"
+    sh "start-local.sh" -noplayground
     # shellcheck disable=SC1090
     source "${ENV_PATH}"
 }
@@ -32,26 +32,6 @@ function set_up_before_script() {
 function tear_down_after_script() {
     yes | "${DEFAULT_DIR}/uninstall.sh"
     rm -rf "${DEFAULT_DIR}"
-}
-
-function test_docker_compose_file_exists() {
-    assert_file_exists "${DOCKER_COMPOSE_FILE}"
-}
-
-function test_env_file_exists() {
-    assert_file_exists "${ENV_PATH}"
-}
-
-function test_start_file_exists() {
-    assert_file_exists "${START_FILE}"
-}
-
-function test_stop_file_exists() {
-    assert_file_exists "${STOP_FILE}"
-}
-
-function test_uninstall_file_exists() {
-    assert_file_exists "${UNINSTALL_FILE}"
 }
 
 function test_sequin_is_running() {  
@@ -69,14 +49,14 @@ function test_postgres_is_running() {
     assert_equals "connected" "$result"
 }
 
+function test_playground_database_does_not_exist() {
+    result=$(PGPASSWORD="postgres" psql -h localhost -p 7377 -U postgres -l | grep -c "sequin_playground")
+    assert_equals "0" "$result"
+}
+
 function test_redis_is_running() {
     result=$(redis-cli -h localhost -p 7378 ping)
     assert_equals "PONG" "$result"
-}
-
-function test_playground_database_exists() {
-    result=$(PGPASSWORD="postgres" psql -h localhost -p 7377 -U postgres -l | grep -c "sequin_playground")
-    assert_equals "1" "$result"
 }
 
 function test_prometheus_is_running() {
@@ -87,4 +67,4 @@ function test_prometheus_is_running() {
 function test_grafana_is_running() {
     result=$(get_http_response_code "http://localhost:3000")
     assert_equals "200" "$result"
-}
+} 

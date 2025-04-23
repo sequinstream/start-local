@@ -1,27 +1,25 @@
-# 🚀 Try Elasticsearch and Kibana locally
+# 🚀 Try Sequin locally
 
-Run Elasticsearch and Kibana on your local machine using a simple shell script. This setup uses [Docker](https://www.docker.com/) behind the scenes to install and run the services.
+Run Sequin and its supporting services on your local machine using a simple shell script. This setup uses [Docker](https://www.docker.com/) behind the scenes to install and run the services.
 
 > [!IMPORTANT]  
 > This script is for local testing only. Do not use it in production!
-> For production installations refer to the official documentation for [Elasticsearch](https://www.elastic.co/downloads/elasticsearch) and [Kibana](https://www.elastic.co/downloads/kibana).
+> For production installations refer to the [official Sequin documentation](https://sequinstream.com/docs).
 
 ## 🌟 Features
 
-This script comes with a one-month trial license.
-After the trial period, the license reverts to [Free and open - Basic](https://www.elastic.co/subscriptions).
+This script sets up a complete Sequin environment for local development and testing:
 
-- **Trial**: Includes **All** features like the [Playground](https://www.elastic.co/docs/current/serverless/elasticsearch/playground), [ELSER](https://www.elastic.co/guide/en/machine-learning/current/ml-nlp-elser.html), [semantic retrieval model](https://www.elastic.co/guide/en/machine-learning/8.15/ml-nlp-text-emb-vector-search-example.html), the [Elastic Inference API](https://www.elastic.co/guide/en/elasticsearch/reference/current/inference-apis.html) and much more.
-- **Free and open - Basic**: Includes features like [vector search](https://www.elastic.co/what-is/vector-search), [ES|QL](https://www.elastic.co/guide/en/elasticsearch/reference/current/esql.html) and much more.
-
-For a complete list of subscriptions and features, see our [subscriptions page](https://www.elastic.co/subscriptions).
+- **Sequin**: The main Sequin application
+- **PostgreSQL**: Database for Sequin's internal use and sample data
+- **Redis**: For caching and message processing
+- **Prometheus**: For metrics collection (optional)
+- **Grafana**: For metrics visualization with pre-configured dashboards (optional)
 
 ## 💻 System requirements
 
-- 5 GB of available disk space
 - [Docker](https://www.docker.com/)
-- Works on Linux and macOS
-- On Microsoft Windows it works using [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install)
+- Works on Linux, macOS, and Windows with [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/install)
 
 ## 🏃‍♀️‍➡️ Getting started
 
@@ -30,97 +28,82 @@ For a complete list of subscriptions and features, see our [subscriptions page](
 Run the `start-local` script using [curl](https://curl.se/):
 
 ```bash
-curl -fsSL https://elastic.co/start-local | sh
+curl -fsSL https://sequinstream.com/start-local | sh
 ```
 
-This script creates an `elastic-start-local` folder containing:
+This script creates a `sequin-start-local` folder containing:
 
-- `docker-compose.yml`: Docker Compose configuration for Elasticsearch and Kibana
-- `.env`: Environment settings, including the Elasticsearch password
-- `start.sh` and `stop.sh`: Scripts to start and stop Elasticsearch and Kibana
-- `uninstall.sh`: The script to uninstall Elasticsearch and Kibana
+- `docker-compose.yml`: Docker Compose configuration for Sequin and its supporting services
+- `.env`: Environment settings, including database passwords
+- `start.sh` and `stop.sh`: Scripts to start and stop the Sequin services
+- `uninstall.sh`: The script to uninstall Sequin and its services
 
 ### Select the version to install
 
-By default, `start-local` uses the latest stable version of Elastic Stack. If you want, you can specify
-a different version using the `-v` parameter, as follows:
+By default, `start-local` uses the latest version of Sequin. If you want, you can specify a different version using the `-v` parameter, as follows:
 
 ```bash
-curl -fsSL https://elastic.co/start-local | sh -s -- -v 8.16.0
+curl -fsSL https://sequinstream.com/start-local | sh -s -- -v 0.6.107
 ```
 
-The previous command installs Elasticsearch and Kibana `8.16.0`.
+### Install without Prometheus and Grafana
 
-Using the `-v` parameter, you can also install beta releases, this can be useful for testing an
-upcoming release. For instance, you can install the `9.0.0-beta1` using the following
-command:
+If you want to install only the core services (Sequin, PostgreSQL, and Redis) without Prometheus and Grafana, you can use the `-minimal` option as follows:
 
 ```bash
-curl -fsSL https://elastic.co/start-local | sh -s -- -v 9.0.0-beta1
+curl -fsSL https://sequin.io/start-local | sh -s -- -minimal
 ```
 
-The `9.0.0-beta1` version was released on February 18, 2025.
+### Install without the playground database
 
-### Install only Elasticsearch
-
-If you want to install only Elasticsearch, without Kibana, you can use the `-esonly` option
-as follows:
+If you want to install without the sample playground database, you can use the `-noplayground` option:
 
 ```bash
-curl -fsSL https://elastic.co/start-local | sh -s -- -esonly
+curl -fsSL https://sequin.io/start-local | sh -s -- -noplayground
 ```
-
-This command can be useful if you don't have enough resources and want to test only Elasticsearch.
 
 ### 🌐 Endpoints
 
 After running the script:
 
-- Elasticsearch will be running at <http://localhost:9200>
-- Kibana will be running at <http://localhost:5601>
+- Sequin will be running at <http://localhost:7376>
+- PostgreSQL will be accessible at `localhost:7377`
+- Redis will be accessible at `localhost:7378`
+- Prometheus will be running at <http://localhost:9090> (if installed)
+- Grafana will be running at <http://localhost:3000> (if installed)
 
-The script generates a random password for the `elastic` user, displayed at the end of the installation and stored in the `.env` file.
+The default admin user credentials are:
+
+- Email: `admin@sequinstream.com`
+- Password: `sequinpassword!`
 
 > [!CAUTION]
-> HTTPS is disabled, and Basic authentication is used for Elasticsearch. This configuration is for local testing only. For security, Elasticsearch and Kibana are accessible only via `localhost`.
-
-### 🔑 API key
-
-An API key for Elasticsearch is generated and stored in the `.env` file as `ES_LOCAL_API_KEY`. Use this key to connect to Elasticsearch with the [Elastic SDK](https://www.elastic.co/guide/en/elasticsearch/client) or [REST API](https://www.elastic.co/guide/en/elasticsearch/reference/current/rest-apis.html).
-
-Check the connection to Elasticsearch using `curl` in the `elastic-start-local` folder:
-
-```bash
-source .env
-curl $ES_LOCAL_URL -H "Authorization: ApiKey ${ES_LOCAL_API_KEY}"
-```
+> This configuration is for local testing only. For security, services are accessible only via `localhost`.
 
 ## 🐳 Start and stop the services
 
-You can use the `start` and `stop` commands available in the `elastic-start-local` folder.
+You can use the `start` and `stop` commands available in the `sequin-start-local` folder.
 
-To **stop** the Elasticsearch and Kibana Docker services, use the `stop` command:
+To **stop** the Sequin Docker services, use the `stop` command:
 
 ```bash
-cd elastic-start-local
+cd sequin-start-local
 ./stop.sh
 ```
 
-To **start** the Elasticsearch and Kibana Docker services, use the `start` command:
+To **start** the Sequin Docker services, use the `start` command:
 
 ```bash
-cd elastic-start-local
+cd sequin-start-local
 ./start.sh
 ```
-
-[Docker Compose](https://docs.docker.com/reference/cli/docker/compose/).
 
 ## 🗑️ Uninstallation
 
 To remove the `start-local` installation:
 
 ```bash
-cd elastic-start-local
+cd sequin-start-local
 ./uninstall.sh
 ```
 
@@ -129,30 +112,25 @@ cd elastic-start-local
 
 ## 📝 Logging
 
-If the installation fails, an error log is created in `error-start-local.log`. This file contains logs from Elasticsearch and Kibana, captured using the [docker logs](https://docs.docker.com/reference/cli/docker/container/logs/) command.
+If the installation fails, an error log is created in `error-start-local.log`. This file contains logs from the services, captured using the [docker logs](https://docs.docker.com/reference/cli/docker/container/logs/) command.
 
 ## ⚙️ Customizing settings
 
-To change settings (e.g., Elasticsearch password), edit the `.env` file. Example contents:
+To change settings, edit the `.env` file. Example contents:
 
 ```bash
-ES_LOCAL_VERSION=8.15.2
-ES_LOCAL_URL=http://localhost:9200
-ES_LOCAL_CONTAINER_NAME=es-local-dev
-ES_LOCAL_DOCKER_NETWORK=elastic-net
-ES_LOCAL_PASSWORD=hOalVFrN
-ES_LOCAL_PORT=9200
-KIBANA_LOCAL_CONTAINER_NAME=kibana-local-dev
-KIBANA_LOCAL_PORT=5601
-KIBANA_LOCAL_PASSWORD=YJFbhLJL
-ES_LOCAL_API_KEY=df34grtk...==
+SEQUIN_VERSION=latest
+SEQUIN_CONTAINER_NAME=sequin-local-dev
+PG_CONTAINER_NAME=postgres-local-dev
+PG_PASSWORD=postgres
+REDIS_CONTAINER_NAME=redis-local-dev
 ```
 
 > [!IMPORTANT]
 > After changing the `.env` file, restart the services using `stop` and `start`:
 >
 > ```bash
-> cd elastic-start-local
+> cd sequin-start-local
 > ./stop.sh
 > ./start.sh
 > ```
@@ -175,7 +153,7 @@ We use [bashunit](https://bashunit.typeddevs.com/) to test the script. Tests are
    lib/bashunit
    ```
 
-The tests run `start-local.sh` and check if Elasticsearch and Kibana are working.
+The tests run `start-local.sh` and check if Sequin and its services are working.
 
 > [!NOTE]
 > For URL pipeline testing, a local web server is used. This requires [PHP](https://www.php.net/).

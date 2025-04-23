@@ -1,10 +1,6 @@
 #!/bin/bash
-# Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-# or more contributor license agreements. See the NOTICE file distributed with
-# this work for additional information regarding copyright
-# ownership. Elasticsearch B.V. licenses this file to you under
-# the Apache License, Version 2.0 (the "License"); you may
-# not use this file except in compliance with the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #	http://www.apache.org/licenses/LICENSE-2.0
@@ -17,30 +13,43 @@
 # under the License.
 
 CURRENT_DIR=$(pwd)
-DEFAULT_DIR="${CURRENT_DIR}/elastic-start-local"
+DEFAULT_DIR="${CURRENT_DIR}/sequin-start-local"
 ENV_PATH="${DEFAULT_DIR}/.env"
 DOCKER_COMPOSE_FILE="${DEFAULT_DIR}/docker-compose.yml"
 START_FILE="${DEFAULT_DIR}/start.sh"
 STOP_FILE="${DEFAULT_DIR}/stop.sh"
 UNINSTALL_FILE="${DEFAULT_DIR}/uninstall.sh"
+HOST_PORT=8080
 
 # include external scripts
 source "${CURRENT_DIR}/tests/utility.sh"
 
 function set_up_before_script() {
-    php -S 0.0.0.0:8080 &
-    PHP_SERVER_PID=$!
-    sleep 2
-    curl -fsSL http://localhost:8080/start-local.sh | sh
+    # Start a web server with the current path
+    php -S localhost:${HOST_PORT} -t . &
+    PHP_PID=$!
+    
+    # Wait for the server to start
+    sleep 1
+    
+    # Run the curl command to install
+    curl -fsSL http://localhost:${HOST_PORT}/start-local.sh | sh
+    
     # shellcheck disable=SC1090
     source "${ENV_PATH}"
 }
 
 function tear_down_after_script() {
-    yes | "${DEFAULT_DIR}/uninstall.sh"
-    rm -rf "${DEFAULT_DIR}"
-    kill -9 "$PHP_SERVER_PID"
-    wait "$PHP_SERVER_PID" 2>/dev/null
+    # Kill the PHP server
+    if [ -n "${PHP_PID}" ]; then
+        kill ${PHP_PID}
+    fi
+    
+    # Uninstall
+    if [ -d "${DEFAULT_DIR}" ]; then
+        yes | "${DEFAULT_DIR}/uninstall.sh"
+        rm -rf "${DEFAULT_DIR}"
+    fi
 }
 
 function test_docker_compose_file_exists() {
@@ -63,17 +72,12 @@ function test_uninstall_file_exists() {
     assert_file_exists "${UNINSTALL_FILE}"
 }
 
-function test_elasticsearch_is_running() {  
-    result=$(get_http_response_code "http://localhost:9200" "elastic" "${ES_LOCAL_PASSWORD}")
-    assert_equals "200" "$result"
+function test_sequin_is_running() {  
+    result=$(check_sequin_health "http://localhost:7376/health")
+    assert_equals "ok" "$result"
 }
 
-function test_kibana_is_running() {  
-    result=$(get_http_response_code "http://localhost:5601")
-    assert_equals "200" "$result"
-}
-
-function test_login_to_kibana() {
-    result=$(login_kibana "http://localhost:5601" "elastic" "${ES_LOCAL_PASSWORD}")
+function test_sequin_web_is_accessible() {  
+    result=$(get_http_response_code "http://localhost:7376")
     assert_equals "200" "$result"
 }

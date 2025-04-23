@@ -1,10 +1,6 @@
 #!/bin/bash
-# Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-# or more contributor license agreements. See the NOTICE file distributed with
-# this work for additional information regarding copyright
-# ownership. Elasticsearch B.V. licenses this file to you under
-# the Apache License, Version 2.0 (the "License"); you may
-# not use this file except in compliance with the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #	http://www.apache.org/licenses/LICENSE-2.0
@@ -17,7 +13,7 @@
 # under the License.
 
 # Returns the HTTP status code from a call
-# usage: get_http_response_code url username password
+# usage: get_http_response_code url [username] [password]
 function get_http_response_code() {
     url=$1
     if [ -z "$url" ]; then
@@ -36,30 +32,64 @@ function get_http_response_code() {
     echo "$result"
 }
 
-# Login to Kibana using username and password 
-# usage: login_kibana url username password
-function login_kibana() {
+# Check Sequin health endpoint
+# usage: check_sequin_health url
+function check_sequin_health() {
     url=$1
     if [ -z "$url" ]; then
-        echo "Error: you need to specify the URL for login to Kibana"
+        url="http://localhost:7376/health"
+    fi
+
+    result=$(curl -s "$url")
+    if [[ "$result" == *"\"ok\":true"* ]]; then
+        echo "ok"
+    else
+        echo "error"
+    fi
+}
+
+# Login to Sequin using email and password
+# usage: login_sequin url email password
+function login_sequin() {
+    url=$1
+    if [ -z "$url" ]; then
+        echo "Error: you need to specify the URL for login to Sequin"
         exit 1
     fi 
-    username=$2
+    email=$2
     password=$3
-    if [ -z "$username" ] || [ -z "$password" ]; then
-        echo "Error: you need to specify username and password to login to Kibana"
+    if [ -z "$email" ] || [ -z "$password" ]; then
+        echo "Error: you need to specify email and password to login to Sequin"
         exit 1
     fi
 
     result=$(curl -X POST \
         -H "Content-Type: application/json" \
-        -H "kbn-xsrf: reporting" \
-        -d '{"providerType":"basic","providerName":"basic","currentURL":"'"$url"'/login?next=%2F","params":{"username":"'"$username"'","password":"'"$password"'"}}' \
-        "${url}/internal/security/login" \
+        -d '{"email":"'"$email"'","password":"'"$password"'"}' \
+        "${url}/api/auth/login" \
         -o /dev/null \
         -w '%{http_code}\n' -s)
 
     echo "$result"
+}
+
+# Check if PostgreSQL is accessible
+# usage: check_postgres_connection host port user password database
+function check_postgres_connection() {
+    host=${1:-localhost}
+    port=${2:-7377}
+    user=${3:-postgres}
+    password=${4:-postgres}
+    database=${5:-sequin}
+
+    # Using PGPASSWORD to avoid password prompt
+    result=$(PGPASSWORD="$password" psql -h "$host" -p "$port" -U "$user" -d "$database" -c "SELECT 1" -t -q 2>/dev/null)
+    
+    if [ "$result" = " 1" ] || [ "$result" = "1" ]; then
+        echo "connected"
+    else
+        echo "error"
+    fi
 }
 
 # Tee the output in a file

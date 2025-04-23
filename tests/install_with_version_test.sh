@@ -1,10 +1,6 @@
 #!/bin/bash
-# Copyright Elasticsearch B.V. and/or licensed to Elasticsearch B.V. under one
-# or more contributor license agreements. See the NOTICE file distributed with
-# this work for additional information regarding copyright
-# ownership. Elasticsearch B.V. licenses this file to you under
-# the Apache License, Version 2.0 (the "License"); you may
-# not use this file except in compliance with the License.
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #	http://www.apache.org/licenses/LICENSE-2.0
@@ -17,32 +13,39 @@
 # under the License.
 
 CURRENT_DIR=$(pwd)
-DEFAULT_DIR="${CURRENT_DIR}/elastic-start-local"
+DEFAULT_DIR="${CURRENT_DIR}/sequin-start-local"
 ENV_PATH="${DEFAULT_DIR}/.env"
-UNINSTALL_FILE="${DEFAULT_DIR}/uninstall.sh"
-ES_VERSION="8.17.0"
+DOCKER_COMPOSE_FILE="${DEFAULT_DIR}/docker-compose.yml"
+VERSION="latest"
 
 # include external scripts
 source "${CURRENT_DIR}/tests/utility.sh"
 
 function set_up_before_script() {
-    sh "start-local.sh" "-v" "${ES_VERSION}"
+    sh "start-local.sh" -v "${VERSION}"
     # shellcheck disable=SC1090
     source "${ENV_PATH}"
 }
 
 function tear_down_after_script() {
-    yes | "${UNINSTALL_FILE}"
+    yes | "${DEFAULT_DIR}/uninstall.sh"
     rm -rf "${DEFAULT_DIR}"
 }
 
-function test_es_version_in_env_is_correct() {
-    assert_file_contains "${ENV_PATH}" "ES_LOCAL_VERSION=${ES_VERSION}"
+function test_env_file_contains_version() {
+    grep -q "SEQUIN_VERSION=${VERSION}" "${ENV_PATH}"
+    exit_code=$?
+    assert_equals 0 $exit_code
 }
 
-function test_es_version_is_correct() {  
-    response=$(curl -s "$ES_LOCAL_URL" -H "Authorization: ApiKey ${ES_LOCAL_API_KEY}")
-    version=$(echo "$response" | jq -r '.version.number')
-    assert_equals "${ES_VERSION}" "$version"
+function test_docker_compose_uses_version() {
+    grep -q "image: sequin/sequin:\${SEQUIN_VERSION}" "${DOCKER_COMPOSE_FILE}"
+    exit_code=$?
+    assert_equals 0 $exit_code
+}
+
+function test_sequin_is_running() {  
+    result=$(check_sequin_health "http://localhost:7376/health")
+    assert_equals "ok" "$result"
 }
 
